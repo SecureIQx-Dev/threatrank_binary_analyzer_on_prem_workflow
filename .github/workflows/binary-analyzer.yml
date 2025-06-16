@@ -162,6 +162,7 @@ jobs:
             exit 1
           fi
 
+          
       - name: Upload binary-analyzer directory as artifact
         uses: actions/upload-artifact@v4
         with:
