@@ -1,0 +1,169 @@
+name: ThreatRank Binary Analyzer
+env:
+  REPO_USER: SecureIQx-Dev
+  REPO_NAME: threatrank_binary_analyzer_on_prem_workflow
+  
+on:
+  workflow_call:
+    inputs:
+      binary_path:
+        type: string
+        description: "Binary file to analyze"
+        required: true
+        default: "binary.bin"
+      cvss_lower_bound:
+        type: string
+        description: "CVSS lower bound"
+        required: false
+        default: "HIGH"
+      epss_percentile_lower_bound:
+        type: string
+        description: "EPSS percentile lower bound"
+        required: false
+        default: "0.00"
+      sbom_path:
+        type: string
+        description: "Path to SBOM file (if needed)"
+        required: false
+        default: ""
+      sbom_type:
+        type: string
+        description: "SBOM type (cyclonedx or spdx)"
+        required: false
+        default: "cyclonedx"
+    secrets:
+      pat:
+        description: "Personal Access Token"
+        required: true
+      license_key:
+        description: "License key for binary analyzer"
+        required: true
+
+jobs:
+  binary_analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.pat }}
+
+      - name: Checkout binary analyzer repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REPO_USER }}/${{ env.REPO_NAME }}
+          ref: main
+          path: ./${{ env.REPO_NAME }}
+          token: ${{ secrets.pat }}
+
+      - name: Create Artifacts Directory
+        run: |
+          mkdir -p ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts
+          mkdir -p ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts/output-dir
+          ls -la ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts
+
+      - name: Log Into GitHub Container Registry
+        run: echo "${{ secrets.pat }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull Image from GitHub Container Registry
+        run: |
+          docker pull ghcr.io/secureiqx-dev/binary_analyzer:latest
+          docker tag ghcr.io/secureiqx-dev/binary_analyzer:latest binary_analyzer:latest
+
+      - name: Generate CVE List
+        working-directory: ./${{ env.REPO_NAME }}
+        env:
+          LICENSE_KEY: ${{ secrets.license_key }}
+          BINARY_PATH: "/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ inputs.binary_path }}"
+          SBOM_PATH: "${{ inputs.sbom_path }}"
+          SBOM_TYPE: "${{ inputs.sbom_type }}"
+        run: |
+          # Check if binary exists
+          ls -la "${BINARY_PATH}"
+          if [[ -n "${SBOM_PATH}" && "${SBOM_PATH}" != "" ]]; then
+            echo "Using SBOM: ${SBOM_PATH} (${SBOM_TYPE})"
+            docker run --rm \
+              -v ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts:/app/artifacts \
+              -v /home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:/app/binaries \
+              binary_analyzer generate_cve_list \
+              "/app/binaries/${{ inputs.binary_path }}" \
+              "${LICENSE_KEY}" \
+              "${SBOM_PATH}" \
+              "${SBOM_TYPE}"
+          else
+            echo "No SBOM provided, analyzing binary directly"
+            docker run --rm \
+              -v ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts:/app/artifacts \
+              -v /home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:/app/binaries \
+              binary_analyzer generate_cve_list \
+              "/app/binaries/${{ inputs.binary_path }}" \
+              "${LICENSE_KEY}"
+          fi
+
+      - name: Clean EPSS Scores
+        working-directory: ./${{ env.REPO_NAME }}
+        env:
+          EPSS_PERCENTILE_LOWER_BOUND: ${{ inputs.epss_percentile_lower_bound }}
+          CVSS_LOWER_BOUND: ${{ inputs.cvss_lower_bound}}
+          LICENSE_KEY: ${{ secrets.license_key }}
+        run: |
+          docker run --rm \
+            -v ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts:/app/artifacts \
+            binary_analyzer clean_cve_list \
+            "${CVSS_LOWER_BOUND}" \
+            "${LICENSE_KEY}" \
+            "${EPSS_PERCENTILE_LOWER_BOUND}"
+
+      - name: Run Analysis
+        working-directory: ./${{ env.REPO_NAME }}
+        env:
+          BINARY_PATH: "/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ inputs.binary_path }}"
+          ROOT_PATH: "/app"
+          LICENSE_KEY: ${{ secrets.license_key }}
+          THREATRANK_PRO: "false"
+        run: |
+          docker run --rm \
+            -v ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts:/app/artifacts \
+            -v /home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:/app/binaries \
+            binary_analyzer run_analysis \
+            "no key" \
+            "/app/binaries/${{ inputs.binary_path }}" \
+            "${ROOT_PATH}" \
+            "${LICENSE_KEY}" \
+            "${THREATRANK_PRO}"
+
+      - name: Run Cleanup
+        working-directory: ./${{ env.REPO_NAME }}
+        env:
+          LICENSE_KEY: ${{ secrets.license_key }}
+        run: |
+          docker run --rm \
+            -v ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts:/app/artifacts \
+            binary_analyzer run_cleanup \
+            "${LICENSE_KEY}"
+
+      - name: Verify Artifacts
+        working-directory: ./${{ env.REPO_NAME }}
+        run: |
+          echo "Checking for analysis results..."
+          if ls ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts/output-dir/final-threatrank-analysis-binary-*.csv 1> /dev/null 2>&1; then
+            echo "Analysis results found"
+            ls -l ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts/output-dir/final-threatrank-analysis-binary-*.csv
+          else
+            echo "No analysis results found!"
+            exit 1
+          fi
+
+      - name: Upload binary-analyzer directory as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "[${{ github.event.repository.name }}]-binary-analyzer-artifact"
+          path: ./${{ env.REPO_NAME }}/${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts/output-dir/final-threatrank-analysis-binary-*.csv
