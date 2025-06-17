@@ -70,8 +70,8 @@ jobs:
           mkdir -p ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts/output-dir
           ls -la ./${{ env.REPO_NAME }}/.github/workflows/binary-analyzer/artifacts
 
-      - name: Log Into GitHub Container Registry
-        run: echo "${{ secrets.pat }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
+      # - name: Log Into GitHub Container Registry
+      #   run: echo "${{ secrets.pat }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull Image from GitHub Container Registry
         run: |
