@@ -72,7 +72,6 @@ jobs:
 
       # - name: Log Into GitHub Container Registry
       #   run: echo "${{ secrets.pat }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
-
       - name: Pull Image from GitHub Container Registry
         run: |
           docker pull ghcr.io/secureiqx-dev/binary_analyzer:latest
