@@ -93,7 +93,7 @@ jobs:
               binary_analyzer generate_cve_list \
               "/app/binaries/${{ inputs.binary_path }}" \
               "${LICENSE_KEY}" \
-              "${SBOM_PATH}" \
+              "/app/binaries/${{ inputs.sbom_path }}" \
               "${SBOM_TYPE}"
           else
             echo "No SBOM provided, analyzing binary directly"
